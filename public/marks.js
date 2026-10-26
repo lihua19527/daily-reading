@@ -375,6 +375,7 @@ function render() {
   $('#masteredGrid').hidden = !grid || mastered.length === 0;
 
   updateEnrichBar();
+  if (!$('#spellBox')?.hidden) updateSpellFoot();
 }
 
 /* ---------- 交互 ---------- */
@@ -458,7 +459,12 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeCard();
+  if (e.key === 'Escape') {
+    // 拼写面板在最上层，Esc 先关它
+    if (!$('#spellBox')?.hidden) return closeSpell();
+    closeCard();
+    return;
+  }
   // 卡片可以 Tab 到，回车 / 空格打开（鼠标点走上面的 click）
   if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('word-tile')) {
     e.preventDefault();
@@ -533,6 +539,247 @@ window.addEventListener(
   { passive: true }
 );
 window.addEventListener('resize', syncSubNav);
+
+/* ---------- 拼写练习（按遗忘曲线排队） ---------- */
+const spell = { word: null, answered: false };
+const SPELL_DAY = 86400000;
+
+/** 已掌握的那一摞就是题库 */
+function spellPool() {
+  return state.marks.filter((m) => m.mastered);
+}
+
+function spellDueTime(m) {
+  const t = m.spellDue ? Date.parse(m.spellDue) : NaN;
+  // 老数据没有排期：当成「现在就该复习」
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** 到期的词：先按到期时间早的，再按复习次数少的（越生的越先练） */
+function spellQueue() {
+  const now = Date.now();
+  return spellPool()
+    .filter((m) => spellDueTime(m) <= now)
+    .sort((a, b) => {
+      const d = spellDueTime(a) - spellDueTime(b);
+      if (d) return d;
+      const r = (Number(a.spellReps) || 0) - (Number(b.spellReps) || 0);
+      if (r) return r;
+      return String(a.masteredAt || a.addedAt || '').localeCompare(String(b.masteredAt || b.addedAt || ''));
+    });
+}
+
+/** 还没到期的话，下一次该什么时候练 */
+function spellNextDue() {
+  const now = Date.now();
+  const future = spellPool()
+    .map(spellDueTime)
+    .filter((t) => t > now)
+    .sort((a, b) => a - b);
+  return future.length ? future[0] : null;
+}
+
+function pickSpell() {
+  return spellQueue()[0] || null;
+}
+
+/** 到期时间写成「今天 / 明天 / 10 月 26 日」 */
+function fmtSpellDue(iso) {
+  const t = iso ? new Date(iso) : null;
+  if (!t || Number.isNaN(t.getTime())) return '今天';
+  const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOf(t) - startOf(new Date())) / SPELL_DAY);
+  if (days <= 0) return '今天';
+  if (days === 1) return '明天';
+  return `${t.getMonth() + 1} 月 ${t.getDate()} 日`;
+}
+
+/** 提示只给首字母，其余按字母数画下划线；连字符、空格、撇号原样保留 */
+function spellMask(word) {
+  return String(word)
+    .split('')
+    .map((ch, i) => (i === 0 ? ch : /[A-Za-z]/.test(ch) ? '_' : ch))
+    .join(' ');
+}
+
+/** 放弃时把整个词摊开在掩码那一行，让人一眼看到正确拼写 */
+function revealSpellAnswer(word) {
+  const mask = $('#spellMask');
+  if (!mask) return;
+  mask.textContent = String(word);
+  mask.classList.add('is-revealed');
+}
+
+/** 判断题：忽略大小写、首尾空格和中间多打的空格；撇号 ’ 和 ' 等同 */
+function spellSame(a, b) {
+  const norm = (s) =>
+    String(s || '')
+      .toLowerCase()
+      .replace(/[’‘]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+  return norm(a) === norm(b);
+}
+
+function spellSay(text, kind) {
+  const el = $('#spellStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'spell-status' + (kind ? ' is-' + kind : '');
+}
+
+function updateSpellFoot() {
+  const foot = $('#spellFoot');
+  if (!foot) return;
+  const pool = spellPool().length;
+  const due = spellQueue().length;
+  if (!pool) {
+    foot.textContent = '「已掌握」里还没有词，先背下来几个再来练。';
+    return;
+  }
+  if (!due) {
+    foot.textContent = `今天待复习 0 个 · 已掌握的 ${pool} 个都排好期了`;
+    return;
+  }
+  const cur = spell.word ? spellPool().find((m) => m.word === spell.word) : null;
+  const reps = cur ? Number(cur.spellReps) || 0 : 0;
+  foot.textContent = `今天待复习 ${due} 个 · 这个词已复习 ${reps} 次 · 拼错就退回「学习中」`;
+}
+
+function loadSpellWord() {
+  const m = pickSpell();
+  const input = $('#spellInput');
+  const check = $('#spellCheck');
+  const skip = $('#spellSkip');
+  const next = $('#spellNext');
+  spell.word = m ? m.word : null;
+  spell.answered = false;
+  spellSay('', '');
+  if (input) {
+    input.value = '';
+    input.disabled = !m;
+  }
+  if (check) check.disabled = !m;
+  if (skip) skip.disabled = !m;
+  if (next) next.hidden = true;
+  if (check) check.hidden = false;
+  if (skip) skip.hidden = false;
+  $('#spellMask')?.classList.remove('is-revealed');
+  updateSpellFoot();
+  if (!m) {
+    const nextDue = spellNextDue();
+    $('#spellPrompt').textContent = spellPool().length ? '今天没有要复习的词' : '还没有可练的词';
+    $('#spellMeta').textContent = nextDue ? `下一次复习：${fmtSpellDue(nextDue)}` : '把词标成「已掌握」后就会排队';
+    $('#spellMask').textContent = '';
+    return;
+  }
+  $('#spellPrompt').textContent = m.cn || m.examSense || '（这个词还没释义，先去补全）';
+  $('#spellMeta').textContent = [m.pos, m.phonetic].filter(Boolean).join('  ');
+  $('#spellMask').textContent = spellMask(m.word);
+  if (input) input.focus();
+}
+
+function openSpell() {
+  const box = $('#spellBox');
+  if (!box) return;
+  box.hidden = false;
+  document.body.classList.add('spell-open');
+  loadSpellWord();
+}
+
+function closeSpell() {
+  const box = $('#spellBox');
+  if (!box || box.hidden) return;
+  box.hidden = true;
+  document.body.classList.remove('spell-open');
+  spell.word = null;
+}
+
+/**
+ * 提交一次拼写结果：答对由服务端按遗忘曲线推到下一天，
+ * 答错（含「不会」）则打回「学习中」，回到它当初被收藏的那一天。
+ */
+async function reviewSpell(word, correct) {
+  if (!word) return null;
+  const res = await fetch('/api/marks/spell', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ word, correct }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  state.marks = body.marks || state.marks;
+  render();
+  return body;
+}
+
+function spellCheckAnswer() {
+  if (!spell.word || spell.answered) return;
+  const word = spell.word;
+  const input = $('#spellInput');
+  const typed = input ? input.value : '';
+  if (!String(typed).trim()) {
+    spellSay('先拼一下，或者点「不会，看答案」。', 'warn');
+    return;
+  }
+  spell.answered = true;
+  if (input) input.disabled = true;
+  $('#spellCheck').hidden = true;
+  $('#spellSkip').hidden = true;
+  $('#spellNext').hidden = false;
+  if (spellSame(typed, word)) {
+    spellSay(`拼对了：${word}`, 'ok');
+    reviewSpell(word, true)
+      .then((body) => {
+        if (!body) return;
+        spellSay(`拼对了：${word} · ${body.interval} 天后（${fmtSpellDue(body.due)}）再练`, 'ok');
+      })
+      .catch((err) => toast(err.message || String(err), true));
+  } else {
+    revealSpellAnswer(word);
+    if (input) input.value = word;
+    spellSay(`这是 ${word}。它退回「学习中」了，过几天再练。`, 'bad');
+    reviewSpell(word, false).catch((err) => spellSay(`这是 ${word}。记录失败：${err.message || err}（改过 server.js 要重启服务）`, 'warn'));
+  }
+  updateSpellFoot();
+  $('#spellNext').focus();
+}
+
+function spellSkipAnswer() {
+  if (!spell.word || spell.answered) return;
+  const word = spell.word;
+  spell.answered = true;
+  const input = $('#spellInput');
+  if (input) {
+    input.value = word;
+    input.disabled = true;
+  }
+  $('#spellCheck').hidden = true;
+  $('#spellSkip').hidden = true;
+  $('#spellNext').hidden = false;
+  revealSpellAnswer(word);
+  spellSay(`答案：${word}。它退回「学习中」了。`, 'bad');
+  reviewSpell(word, false).catch((err) => spellSay(`答案：${word}。记录失败：${err.message || err}（改过 server.js 要重启服务）`, 'warn'));
+  updateSpellFoot();
+  $('#spellNext').focus();
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#btnSpell')) return openSpell();
+  if (e.target.closest('#spellClose')) return closeSpell();
+  if (e.target.closest('#spellCheck')) return spellCheckAnswer();
+  if (e.target.closest('#spellSkip')) return spellSkipAnswer();
+  if (e.target.closest('#spellNext')) return loadSpellWord();
+  // 点遮罩空白处退出
+  if (e.target.id === 'spellBox') return closeSpell();
+});
+
+$('#spellInput')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  if (spell.answered) loadSpellWord();
+  else spellCheckAnswer();
+});
 
 /* ---------- 启动 ---------- */
 async function boot() {

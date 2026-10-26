@@ -51,6 +51,7 @@
           <button type="button" data-view="list" aria-pressed="true">列表</button>
           <button type="button" data-view="graph" aria-pressed="false">网状</button>
         </div>
+        <button class="btn" id="btnSpell" type="button" title="从「已掌握」里随机抽词，按释义拼出来">拼写</button>
         <div class="enrich-bar">
           <p class="enrich-status" id="enrichStatus" role="status"></p>
           <button class="btn tiny" id="btnEnrich" type="button" hidden>补全音标与例句</button>
@@ -94,6 +95,27 @@
   <button class="word-card-close" id="wordCardClose" type="button" aria-label="关闭">×</button>
   <div class="word-card-body" id="wordCardBody"></div>
 </aside>
+
+<div class="spell" id="spellBox" hidden>
+  <div class="spell-panel" role="dialog" aria-modal="true" aria-labelledby="spellTitle">
+    <div class="spell-head">
+      <p class="eyebrow" id="spellTitle">Spell / 拼写</p>
+      <button class="word-card-close" id="spellClose" type="button" aria-label="退出拼写">×</button>
+    </div>
+    <p class="spell-lede">按遗忘曲线排队：只练今天该复习的「已掌握」词，先到期先练。看释义把它拼出来，拼对了过几天再见，拼错或点「不会」就退回当天那一摞「学习中」。</p>
+    <p class="spell-prompt" id="spellPrompt">还没有可练的词</p>
+    <p class="spell-meta" id="spellMeta"></p>
+    <p class="spell-mask" id="spellMask"></p>
+    <input class="spell-input" id="spellInput" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="在这里拼，回车提交" />
+    <p class="spell-status" id="spellStatus" role="status"></p>
+    <div class="spell-actions">
+      <button class="btn" id="spellCheck" type="button">检查</button>
+      <button class="btn ghost" id="spellSkip" type="button">不会，看答案</button>
+      <button class="btn ghost" id="spellNext" type="button" hidden>下一题</button>
+    </div>
+    <p class="spell-foot" id="spellFoot"></p>
+  </div>
+</div>
 
 <div class="toast" id="toast" hidden></div>
 <script src="/marks.js"></script>

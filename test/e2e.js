@@ -505,6 +505,13 @@ const dataUrl = (file) => `data:image/png;base64,${fs.readFileSync(file).toStrin
     const gen2 = await json('/api/article/generate', { method: 'POST', body: { date: '2026-10-16' } });
     check('切回复习模式后重新覆盖全部词', gen2.data.article.glossary.length === 5, `实际 ${gen2.data.article.glossary.length}`);
 
+    // ---- 7b. 「今天」按早上 6 点换日 ----
+    const storeLib = require(path.join(ROOT, 'lib', 'store.js'));
+    const atLocal = (y, mo, d, h, mi) => new Date(y, mo - 1, d, h, mi, 0);
+    check('凌晨 5:59 还算前一天', storeLib.todayStr(atLocal(2026, 10, 24, 5, 59)) === '2026-10-23', storeLib.todayStr(atLocal(2026, 10, 24, 5, 59)));
+    check('早上 6:00 翻到新的一天', storeLib.todayStr(atLocal(2026, 10, 24, 6, 0)) === '2026-10-24', storeLib.todayStr(atLocal(2026, 10, 24, 6, 0)));
+    check('白天仍是当天', storeLib.todayStr(atLocal(2026, 10, 24, 23, 30)) === '2026-10-24', storeLib.todayStr(atLocal(2026, 10, 24, 23, 30)));
+
     // ---- 8. 重新读取 ----
     const s1 = await json('/api/state?date=2026-10-16');
     check('归档里有这篇文章', s1.data.dates.includes('2026-10-16'));
@@ -601,6 +608,37 @@ const dataUrl = (file) => `data:image/png;base64,${fs.readFileSync(file).toStrin
 
     const mkRm = await json('/api/marks?word=sanction', { method: 'DELETE' });
     check('能单独删掉一个生词', mkRm.data.marks.length === 1 && mkRm.data.marks[0].word === 'borrowed');
+
+    // ---- 9c-2. 拼写复习按遗忘曲线排期 ----
+    const mkMaster = await json('/api/marks/mastered', { method: 'POST', body: { word: 'borrowed', mastered: true } });
+    const newlyMastered = mkMaster.data.mark;
+    check(
+      '标成已掌握后立刻排进复习队列',
+      newlyMastered.mastered === true && !!newlyMastered.spellDue && Date.parse(newlyMastered.spellDue) <= Date.now() + 1000,
+      JSON.stringify({ due: newlyMastered.spellDue })
+    );
+
+    const spell1 = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: true } });
+    const gap1 = Date.parse(spell1.data.due) - Date.now();
+    check('第一次答对：1 天后复习', spell1.data.interval === 1 && spell1.data.mark.spellReps === 1, JSON.stringify(spell1.data));
+    check('下一次复习时间落在一天后', gap1 > 20 * 3600000 && gap1 < 28 * 3600000, String(gap1));
+
+    const spell2 = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: true } });
+    check('第二次答对：3 天后复习', spell2.data.interval === 3 && spell2.data.mark.spellReps === 2, JSON.stringify(spell2.data));
+
+    const spell3 = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: true } });
+    check('第三次答对：间隔开始滚雪球', spell3.data.interval >= 6 && spell3.data.mark.spellEase > 2.5, JSON.stringify(spell3.data));
+
+    const spellMiss = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: false } });
+    check(
+      '拼错后退回学习中并清掉排期',
+      spellMiss.data.mark.mastered === false && spellMiss.data.mark.spellDue === undefined && spellMiss.data.mark.spellReps === 0,
+      JSON.stringify(spellMiss.data.mark)
+    );
+    check('拼错会拉低熟练度', spellMiss.data.mark.spellEase < spell3.data.mark.spellEase, String(spellMiss.data.mark.spellEase));
+
+    const spellBad = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: true } });
+    check('对「学习中」的词不能做拼写复习', spellBad.status === 400 && /已掌握/.test(spellBad.data.error), JSON.stringify(spellBad.data));
 
     const dictClear = await json('/api/dict', { method: 'DELETE' });
     check('能清空词典缓存', dictClear.data.dictCount === 0);

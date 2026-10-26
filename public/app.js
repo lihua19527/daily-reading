@@ -261,21 +261,23 @@ function watchNav() {
 
 function renderMarks() {
   const box = $('#markList');
-  const n = state.marks.length;
-  const mastered = state.marks.filter((m) => m.mastered).length;
+  // 侧栏只放「学习中」的词，和生词本页那个数字对齐；已掌握的在生词本里翻
+  const learning = state.marks.filter((m) => !m.mastered);
+  const n = learning.length;
   $('#markCount').textContent = n;
-  // 导航上的小数字只算「学习中」，已掌握的不再占注意力
   const navCount = $('#navMarkCount');
-  if (navCount) navCount.textContent = String(n - mastered);
-  $('#btnClearMarks').disabled = !n;
+  // 导航上的小数字只算「学习中」，已掌握的不再占注意力
+  if (navCount) navCount.textContent = String(n);
+  $('#btnClearMarks').disabled = !state.marks.length;
   syncLedger();
   if (!n) {
-    box.innerHTML =
-      '<p class="tip" style="margin:0">导入的单词会自动进这里；阅读时点任意单词、点「☆ 收藏」也能收。</p>';
+    box.innerHTML = state.marks.length
+      ? '<p class="tip" style="margin:0">这里的词都标成「已掌握」了。去生词本翻回来，点「退回学习」还会回到这里。</p>'
+      : '<p class="tip" style="margin:0">导入的单词会自动进这里；阅读时点任意单词、点「☆ 收藏」也能收。</p>';
     return;
   }
   // 侧栏只露出最近三个词；多出来的用一行「⋯」提示去生词本看
-  const ordered = state.marks
+  const ordered = learning
     .slice()
     .sort((a, b) => String(b.addedAt || '').localeCompare(String(a.addedAt || '')));
   const shown = ordered.slice(0, SIDEBAR_MARKS);
@@ -1431,9 +1433,33 @@ function bindTop() {
   };
 }
 
+/** 和服务端一样的「今天」：早上 6 点换日，凌晨 0–6 点还算前一天 */
+const DAY_START_HOUR = 6;
+function localDayKey(d = new Date()) {
+  const t = new Date(d.getTime() - DAY_START_HOUR * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+}
+
+/** 页面一直开着也要在 6 点自动翻到新的一天：只清空白、不删昨天的数据 */
+function watchDayRollover() {
+  const check = () => {
+    if (!state.today) return;
+    if (state.date !== state.today) return; // 正在看历史，别把人拽走
+    if (localDayKey() === state.today) return;
+    load().catch(() => {});
+  };
+  setInterval(check, 30 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) check();
+  });
+  window.addEventListener('focus', check);
+}
+
 bindTop();
 bindModals();
 bindImageImport();
 watchNav();
+watchDayRollover();
 renderThumbs();
 load().catch((e) => toast(e.message, true));

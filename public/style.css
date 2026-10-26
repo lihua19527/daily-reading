@@ -872,7 +872,7 @@ kbd {
 .view-switch button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 .view-switch button:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
 
-.enrich-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.enrich-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-left: auto; }
 .enrich-status { margin: 0; font-size: 11px; line-height: 1.6; color: var(--muted); }
 .enrich-status:empty { display: none; }
 
@@ -1285,4 +1285,46 @@ kbd {
   .mode-switch { flex: 1 1 100%; }
   .mode-switch button { flex: 1 1 0; }
   .today-tools .btn { flex: 1 1 0; }
+}
+
+/* ---------- 拼写练习：从「已掌握」里抽词，按释义拼回来 ---------- */
+.spell {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+  padding: 24px; background: rgba(17, 17, 17, .42);
+}
+.spell[hidden] { display: none; }
+body.spell-open { overflow: hidden; }
+.spell-panel {
+  position: relative; width: min(560px, 100%);
+  padding: 24px 24px 18px; background: var(--paper-white); border: 2px solid var(--ink);
+  box-shadow: 10px 10px 0 rgba(17, 17, 17, .18);
+}
+.spell-panel::before {
+  content: ''; position: absolute; left: -2px; right: -2px; top: -2px; height: 8px; background: var(--red);
+}
+.spell-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.spell-head .eyebrow { margin: 6px 0 0; }
+.spell-head .word-card-close { position: static; }
+.spell-lede { margin: 10px 0 16px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.spell-prompt { margin: 0 0 4px; font-size: 24px; font-weight: 850; line-height: 1.3; letter-spacing: -.6px; }
+.spell-meta { margin: 0 0 10px; font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 18px; }
+.spell-mask { margin: 0 0 14px; font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: 4px; }
+.spell-input {
+  width: 100%; padding: 12px 14px; background: #fff;
+  border: 2px solid var(--ink); font: inherit; font-family: var(--mono); font-size: 20px; color: var(--ink);
+}
+.spell-input:focus { outline: 3px solid var(--yellow); outline-offset: 1px; }
+.spell-input:disabled { background: #f2efe7; }
+.spell-mask.is-revealed { color: var(--red); letter-spacing: .04em; }
+.spell-status { margin: 10px 0 0; font-size: 13px; font-weight: 700; min-height: 20px; }
+.spell-status.is-ok { color: var(--blue); }
+.spell-status.is-bad { color: var(--red); }
+.spell-status.is-warn { color: var(--ink); }
+.spell-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.spell-foot { margin: 12px 0 0; font-size: 11px; color: var(--muted); }
+@media (max-width: 560px) {
+  .spell { padding: 12px; }
+  .spell-panel { padding: 20px 16px 14px; }
+  .spell-prompt { font-size: 20px; }
+  .spell-input { font-size: 17px; }
 }

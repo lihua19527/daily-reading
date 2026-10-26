@@ -637,20 +637,23 @@ function seed() {
     const marks1 = JSON.parse(
       await cdp.eval(`JSON.stringify({
         total: state.marks.length,
+        learning: state.marks.filter((m) => !m.mastered).length,
         chips: document.querySelectorAll('#markList .mark-chip').length,
         word: document.querySelector('#markList .mark-chip .w')?.textContent,
         cn: document.querySelector('#markList .mark-chip .m')?.textContent,
         btn: document.querySelector('#popover [data-mark]')?.textContent || '',
         count: document.getElementById('markCount').textContent,
+        navCount: document.getElementById('navMarkCount')?.textContent || '',
         more: document.querySelector('#markList .mk-more')?.textContent.trim() || ''
       })`)
     );
     check('收藏后生词本里有这个词', marks1.total === marksBefore + 1 && marks1.word === 'paragraph', JSON.stringify(marks1));
     check('生词本记住了释义', marks1.cn.includes('中文释义'), marks1.cn);
     check('收藏后按钮变成「已在生词本」', marks1.btn.includes('已在生词本'), marks1.btn);
-    check('生词本计数同步', marks1.count === String(marks1.total), JSON.stringify(marks1));
-    check('侧栏最多只露三个词', marks1.chips === Math.min(3, marks1.total), JSON.stringify(marks1));
-    check('多出来的词有「还有 N 个」提示', marks1.total > 3 ? /还有\s*\d+\s*个/.test(marks1.more) : marks1.more === '', JSON.stringify(marks1));
+    check('侧栏计数只算「学习中」，和生词本页一致', marks1.count === String(marks1.learning), JSON.stringify(marks1));
+    check('导航上的生词数也只算「学习中」', marks1.navCount === String(marks1.learning), JSON.stringify(marks1));
+    check('侧栏最多只露三个词', marks1.chips === Math.min(3, marks1.learning), JSON.stringify(marks1));
+    check('多出来的词有「还有 N 个」提示', marks1.learning > 3 ? /还有\s*\d+\s*个/.test(marks1.more) : marks1.more === '', JSON.stringify(marks1));
 
     // 生词本要能一眼看全：多行卡片 + 不截断 + 侧栏可滚动
     const markLayout = JSON.parse(
@@ -682,18 +685,21 @@ function seed() {
           cn: '很长的示例释义 ' + i,
           pos: 'n.',
           collocation: 'sample sth'
-        })));
+        })), [{ word: 'zzmastered', cn: '已掌握示例', mastered: true }]);
         renderMarks();
         return {
           chips: document.querySelectorAll('#markList .mark-chip').length,
           total: state.marks.length,
+          learning: state.marks.filter((m) => !m.mastered).length,
           count: document.getElementById('markCount').textContent,
+          masteredShown: [...document.querySelectorAll('#markList .mark-chip .w')].some((el) => el.textContent === 'zzmastered'),
           first: document.querySelector('#markList .mark-chip .w')?.textContent
         };
       })())`)
     );
     check('侧栏只显示前三个生词', sidebarLimit.chips === 3, JSON.stringify(sidebarLimit));
-    check('面板标题上的计数仍是全部词数', sidebarLimit.count === String(sidebarLimit.total), JSON.stringify(sidebarLimit));
+    check('面板计数只算「学习中」，已掌握的不计入', sidebarLimit.count === String(sidebarLimit.learning), JSON.stringify(sidebarLimit));
+    check('已掌握的词不出现在侧栏列表里', sidebarLimit.masteredShown === false, JSON.stringify(sidebarLimit));
     await cdp.eval(`state.marks = window.__realMarks; renderMarks(); 'ok'`);
 
     // 非目标词本来只是纯文本，收藏之后正文里要立刻变成蓝色，不能等重新渲染
@@ -903,7 +909,12 @@ function seed() {
     // 卡片可能只有一两张，逐张校验轮换关系（第 i 张 = i % 3）
     const accentsOk = archive.accents.every((v, i) => v === String(i % 3));
     check('卡片按三色轮换强调色', accentsOk, archive.accents.join(','));
-    check('第一张卡片是最新那篇', archive.firstDate === new Date().toISOString().slice(0, 10), String(archive.firstDate));
+    // 页面用的是「早上 6 点换日」的本地日期，这里也别拿 UTC 的 toISOString 去比
+    const todayLocal = (() => {
+      const d = new Date(Date.now() - 6 * 3600 * 1000);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    })();
+    check('第一张卡片是最新那篇', archive.firstDate === todayLocal, `${archive.firstDate} vs ${todayLocal}`);
     check('有文章时不显示空态', archive.emptyHidden === true);
     check('状态行写了篇数', /共 \d+ 篇/.test(archive.status), archive.status);
 
@@ -1227,6 +1238,122 @@ function seed() {
       label: '退回学习',
     });
     check('能退回学习中', true);
+
+    // 拼写练习：从「已掌握」随机抽词，拼错就退回学习中的那一摞
+    await cdp.eval(`document.querySelector('#learningList .mark-row[data-word="ledger"] [data-act="master"]').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`state.marks.find(m => m.word === 'ledger')?.mastered === true`), {
+      label: '准备一个已掌握的词',
+    });
+    const hasSpellBtn = await cdp.eval(`!!document.getElementById('btnSpell')`);
+    check('生词本有「拼写」按钮', hasSpellBtn === true);
+    await cdp.eval(`document.getElementById('btnSpell').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`!document.getElementById('spellBox').hidden`), { label: '打开拼写面板' });
+    const spell1 = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        prompt: document.getElementById('spellPrompt').textContent,
+        mask: document.getElementById('spellMask').textContent,
+        foot: document.getElementById('spellFoot').textContent,
+        focused: document.activeElement && document.activeElement.id,
+        word: spell.word,
+        pool: state.marks.filter(m => m.mastered).length,
+        leaked: document.getElementById('spellBox').textContent.includes(spell.word)
+      })`)
+    );
+    check('拼写面板给出释义、不直接露出单词', spell1.prompt.length > 0 && spell1.leaked === false, JSON.stringify(spell1));
+    check('拼写提示只给首字母', spell1.mask.split(' ')[0] === spell1.word[0], JSON.stringify(spell1));
+    check('打开拼写时输入框自动获得焦点', spell1.focused === 'spellInput', JSON.stringify(spell1));
+    check('面板上写着今天要复习几个', /今天待复习\s*\d+\s*个/.test(spell1.foot), spell1.foot);
+    check('面板上写着这个词复习过几次', /已复习\s*\d+\s*次/.test(spell1.foot), spell1.foot);
+
+    // 乱拼一个：这个词应该退回「学习中」，并且回到它当初收藏的那一天
+    const beforeSpell = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        learning: state.marks.filter(m => !m.mastered).length,
+        mastered: state.marks.filter(m => m.mastered).length
+      })`)
+    );
+    await cdp.eval(`(() => { const i = document.getElementById('spellInput'); i.value = 'zzzz'; document.getElementById('spellCheck').click(); return 'ok'; })()`);
+    await waitFor(() => cdp.eval(`state.marks.find(m => m.word === spell.word)?.mastered === false`).catch(() => false), {
+      label: '拼错后退回学习中',
+    });
+    const spell2 = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        status: document.getElementById('spellStatus').textContent,
+        bad: document.getElementById('spellStatus').classList.contains('is-bad'),
+        nextShown: !document.getElementById('spellNext').hidden,
+        learning: state.marks.filter(m => !m.mastered).length,
+        mastered: state.marks.filter(m => m.mastered).length,
+        backInList: !!document.querySelector('#learningList .mark-row[data-word="' + spell.word + '"]'),
+        keptDay: state.marks.find(m => m.word === spell.word)?.addedAt
+      })`)
+    );
+    check('拼错后给出正确答案', spell2.status.includes(spell1.word), spell2.status);
+    check('拼错后出现「下一题」', spell2.nextShown === true && spell2.bad === true, JSON.stringify(spell2));
+    check('拼错的词退回学习中', spell2.learning === beforeSpell.learning + 1 && spell2.mastered === beforeSpell.mastered - 1, JSON.stringify(spell2));
+    check('退回的词回到当天那一摞', spell2.backInList === true && !!spell2.keptDay, JSON.stringify(spell2));
+
+    await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
+    await waitFor(() => cdp.eval(`document.getElementById('spellBox').hidden`), { label: 'Esc 关闭拼写' });
+    check('Esc 能关掉拼写面板', true);
+
+    // 「不会，看答案」要把整个词摊开
+    await cdp.eval(`document.getElementById('btnSpell').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`!document.getElementById('spellBox').hidden && !!spell.word`), { label: '再开拼写准备跳过' });
+    const skipWord = await cdp.eval('spell.word');
+    await cdp.eval(`document.getElementById('spellSkip').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`document.getElementById('spellMask').classList.contains('is-revealed')`), {
+      label: '看答案后摊开拼写',
+    });
+    const skipState = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        mask: document.getElementById('spellMask').textContent,
+        input: document.getElementById('spellInput').value,
+        status: document.getElementById('spellStatus').textContent
+      })`)
+    );
+    check('点「不会」后把整个词显示出来', skipState.mask === skipWord && skipState.input === skipWord, JSON.stringify(skipState));
+    check('点「不会」后有文字反馈', skipState.status.includes(skipWord), skipState.status);
+    await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
+
+    // 答对：按遗忘曲线推到下一天（第一次 1 天）
+    await cdp.eval(`fetch('/api/marks/mastered', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: 'ledger', mastered: true }) }).then(r => r.json()); 'ok'`);
+    await waitFor(() => cdp.eval(`state.marks.find(m => m.word === 'ledger')?.mastered === true`), { label: '重新标成已掌握' });
+    await cdp.eval(`document.getElementById('btnSpell').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`!document.getElementById('spellBox').hidden && !!spell.word`), { label: '再开拼写' });
+    await cdp.eval(`(() => { const i = document.getElementById('spellInput'); i.value = spell.word; document.getElementById('spellCheck').click(); return 'ok'; })()`);
+    await waitFor(() => cdp.eval(`document.getElementById('spellStatus').textContent.includes('再练')`), { label: '答对后给出下次时间' });
+    const spell3 = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        word: spell.word,
+        status: document.getElementById('spellStatus').textContent,
+        due: state.marks.find(m => m.word === spell.word)?.spellDue,
+        reps: state.marks.find(m => m.word === spell.word)?.spellReps,
+        interval: state.marks.find(m => m.word === spell.word)?.spellInterval
+      })`)
+    );
+    const dueGap = Date.parse(spell3.due) - Date.now();
+    check('答对后写进了下次复习时间', spell3.reps === 1 && spell3.interval === 1 && dueGap > 20 * 3600000, JSON.stringify(spell3));
+    check('答对后提示几天后再练', /天后/.test(spell3.status) && spell3.status.includes(spell3.word), spell3.status);
+
+    // 排期没到就不该再抽到它
+    await cdp.eval(`document.getElementById('spellNext').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`document.getElementById('spellPrompt').textContent.length > 0`), { label: '下一题' });
+    const spell4 = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        word: spell.word,
+        prompt: document.getElementById('spellPrompt').textContent,
+        due: spellQueue().length
+      })`)
+    );
+    check('刚练完的词不会马上再出现', spell4.word === null || spell4.word !== spell3.word, JSON.stringify(spell4));
+
+    // 空队列时的文案
+    if (spell4.word === null) {
+      check('队列空了给「今天没有要复习的词」', /今天没有要复习的词/.test(spell4.prompt), spell4.prompt);
+    } else {
+      check('队列还有词时继续练', typeof spell4.word === 'string', JSON.stringify(spell4));
+    }
+    await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
 
     // 空态文案：清空后两段都该给提示
     const cleared = await (
