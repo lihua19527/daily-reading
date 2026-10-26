@@ -1355,6 +1355,29 @@ function seed() {
     }
     await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
 
+    // 双击词条卡片 = 直接标成已掌握，并盖一个章
+    await cdp.eval(`document.querySelector('.view-switch [data-view="graph"]').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`document.querySelectorAll('.word-tile').length > 0`), { label: '切到网状视图' });
+    const dblWord = await cdp.eval(`(() => { const t = document.querySelector('.word-tile'); t.click(); return t.dataset.word; })()`);
+    await waitFor(() => cdp.eval(`!document.getElementById('wordCard').hidden`), { label: '点开词条卡片' });
+    const cardHint = await cdp.eval(`document.querySelector('.card-hint').textContent`);
+    check('词条卡片上写着双击能标已掌握', /双击/.test(cardHint) && /已掌握/.test(cardHint), cardHint);
+    await cdp.eval(`(() => {
+      const b = document.querySelector('.card-word');
+      const r = b.getBoundingClientRect();
+      b.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: r.left + 4, clientY: r.top + 4 }));
+      return 'ok';
+    })()`);
+    await waitFor(() => cdp.eval(`document.querySelectorAll('.card-stamp').length > 0`), { label: '双击后盖章' });
+    check('双击后出现「已掌握」印章', (await cdp.eval(`document.querySelector('.card-stamp').textContent`)) === '已掌握');
+    await waitFor(() => cdp.eval(`state.marks.find((m) => m.word === ${JSON.stringify(dblWord)})?.mastered === true`), {
+      label: '双击后写进已掌握',
+    });
+    check('双击真的标成已掌握', true);
+    await waitFor(() => cdp.eval(`document.getElementById('wordCard').hidden`), { label: '盖章后收起词条' });
+    check('盖章后词条自动收起', true, dblWord);
+    await cdp.eval(`document.querySelector('.view-switch [data-view="list"]').click(); 'ok'`);
+
     // 空态文案：清空后两段都该给提示
     const cleared = await (
       await fetch(`${BASE}/api/marks?all=1`, { method: 'DELETE' })

@@ -222,7 +222,8 @@ function cardHTML(m) {
       ${missing ? '<button class="btn tiny" type="button" data-act="enrich">补全这个词</button>' : ''}
       <button class="btn tiny" type="button" data-act="master" data-next="${m.mastered ? '0' : '1'}">${m.mastered ? '退回学习' : '已掌握'}</button>
       <button class="btn tiny danger" type="button" data-act="remove">删除</button>
-    </div>`;
+    </div>
+    <p class="card-hint">${m.mastered ? '双击这张卡没有用，它已经会了' : '双击这张卡 = 标成「已掌握」'}</p>`;
 }
 
 /** 词条卡片贴在按下那张卡片的旁边：右边放不下就翻到左边，纵向夹在视口里 */
@@ -454,6 +455,44 @@ document.addEventListener('click', async (e) => {
       return toast(`已从生词本删掉「${word}」`);
     }
   } catch (err) {
+    toast(err.message || String(err), true);
+  }
+});
+
+/** 盖章特效：在卡片正中盖一个「已掌握」，飘一下就散 */
+function stampMastered(card) {
+  const rect = card.getBoundingClientRect();
+  const stamp = document.createElement('div');
+  stamp.className = 'card-stamp';
+  stamp.textContent = '已掌握';
+  stamp.setAttribute('aria-hidden', 'true');
+  stamp.style.left = `${rect.right - 96}px`;
+  stamp.style.top = `${Math.min(rect.bottom - 54, window.innerHeight - 64)}px`;
+  document.body.appendChild(stamp);
+  setTimeout(() => stamp.remove(), 900);
+}
+
+/* 双击词条卡片 = 直接标成已掌握，带一下盖章动效 */
+document.addEventListener('dblclick', async (e) => {
+  const card = e.target.closest('#wordCard');
+  if (!card || card.hidden) return;
+  if (e.target.closest('button, a, input, textarea')) return;
+  const word = card.dataset.word;
+  const m = state.marks.find((x) => x.word === word);
+  if (!m) return;
+  if (m.mastered) return toast(`「${word}」已经在「已掌握」里了`);
+  card.classList.remove('is-pop');
+  void card.offsetWidth; // 重启动画
+  card.classList.add('is-pop');
+  stampMastered(card);
+  try {
+    await setMastered(word, true);
+    // 让盖章动效先演完再收卡片，不然一闪就没了
+    await new Promise((r) => setTimeout(r, 520));
+    closeCard();
+    toast(`「${word}」挪到已掌握`);
+  } catch (err) {
+    card.classList.remove('is-pop');
     toast(err.message || String(err), true);
   }
 });

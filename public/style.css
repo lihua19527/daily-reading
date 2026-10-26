@@ -993,6 +993,32 @@ kbd {
   font: inherit; font-size: 16px; line-height: 1; color: var(--ink);
 }
 .word-card-close:hover { background: var(--red); border-color: var(--red); color: #fff; }
+/* 双击标成已掌握：卡片弹一下 + 正中盖个章 */
+.word-card.is-pop { animation: card-pop .26s cubic-bezier(.2, 1.4, .3, 1), card-flash .5s ease-out; }
+@keyframes card-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.018); }
+  100% { transform: scale(1); }
+}
+@keyframes card-flash {
+  0% { box-shadow: 0 0 0 0 rgba(31, 76, 168, .45); }
+  100% { box-shadow: 0 0 0 14px rgba(31, 76, 168, 0); }
+}
+.card-stamp {
+  position: fixed; z-index: 80; pointer-events: none;
+  transform: translate(-50%, -50%) rotate(-8deg);
+  padding: 8px 18px; border: 3px solid var(--blue); color: var(--blue);
+  background: #fff; box-shadow: 4px 4px 0 rgba(31, 76, 168, .22);
+  font-size: 28px; font-weight: 900; letter-spacing: .1em;
+  animation: card-stamp .85s cubic-bezier(.2, 1.1, .3, 1) forwards;
+}
+@keyframes card-stamp {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(-14deg) scale(1.55); }
+  18% { opacity: 1; transform: translate(-50%, -50%) rotate(-8deg) scale(1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -60%) rotate(-8deg) scale(1); }
+}
+.card-hint { margin: 12px 0 0; font-size: 11px; color: var(--muted); }
 .card-eyebrow {
   margin: 8px 0 6px; font-size: 10px; font-weight: 700; letter-spacing: 1.4px;
   text-transform: uppercase; color: var(--muted);
