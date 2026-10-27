@@ -153,9 +153,10 @@ function tileHTML(m, index, mastered) {
     </div>
   </article>`;
 }
-/** 卡片墙也按天分堆：一天一段，段头样式和列表共用 */
+/** 卡片墙也按天分堆：一天一段，段头样式和列表共用。
+ *  「学习中」按收藏那天分，「已掌握」按掌握那天分——今天点已掌握，就落在今天这一堆。 */
 function tilesHTML(items, mastered) {
-  const groups = groupByDay(items, (m) => m.addedAt);
+  const groups = groupByDay(items, (m) => (mastered ? m.masteredAt || m.addedAt : m.addedAt));
   return groups
     .map(
       (g) => `<section class="day-group tile-day">

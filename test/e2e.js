@@ -612,22 +612,27 @@ const dataUrl = (file) => `data:image/png;base64,${fs.readFileSync(file).toStrin
     // ---- 9c-2. 拼写复习按遗忘曲线排期 ----
     const mkMaster = await json('/api/marks/mastered', { method: 'POST', body: { word: 'borrowed', mastered: true } });
     const newlyMastered = mkMaster.data.mark;
+    const firstGap = Date.parse(newlyMastered.spellDue) - Date.now();
     check(
-      '标成已掌握后立刻排进复习队列',
-      newlyMastered.mastered === true && !!newlyMastered.spellDue && Date.parse(newlyMastered.spellDue) <= Date.now() + 1000,
-      JSON.stringify({ due: newlyMastered.spellDue })
+      '标成已掌握就算背过一次：记 1 次复习、明天再练',
+      newlyMastered.mastered === true &&
+        newlyMastered.spellReps === 1 &&
+        newlyMastered.spellInterval === 1 &&
+        firstGap > 20 * 3600000 &&
+        firstGap < 28 * 3600000,
+      JSON.stringify({ reps: newlyMastered.spellReps, interval: newlyMastered.spellInterval, gap: firstGap })
     );
 
     const spell1 = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: true } });
     const gap1 = Date.parse(spell1.data.due) - Date.now();
-    check('第一次答对：1 天后复习', spell1.data.interval === 1 && spell1.data.mark.spellReps === 1, JSON.stringify(spell1.data));
-    check('下一次复习时间落在一天后', gap1 > 20 * 3600000 && gap1 < 28 * 3600000, String(gap1));
+    check('再答对一次：3 天后复习', spell1.data.interval === 3 && spell1.data.mark.spellReps === 2, JSON.stringify(spell1.data));
+    check('下一次复习时间落在三天后', gap1 > 68 * 3600000 && gap1 < 76 * 3600000, String(gap1));
 
     const spell2 = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: true } });
-    check('第二次答对：3 天后复习', spell2.data.interval === 3 && spell2.data.mark.spellReps === 2, JSON.stringify(spell2.data));
+    check('第三次答对：间隔开始滚雪球', spell2.data.interval >= 6 && spell2.data.mark.spellReps === 3, JSON.stringify(spell2.data));
 
     const spell3 = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: true } });
-    check('第三次答对：间隔开始滚雪球', spell3.data.interval >= 6 && spell3.data.mark.spellEase > 2.5, JSON.stringify(spell3.data));
+    check('继续滚：间隔更长、熟练度上调', spell3.data.interval > spell2.data.interval && spell3.data.mark.spellEase > 2.5, JSON.stringify(spell3.data));
 
     const spellMiss = await json('/api/marks/spell', { method: 'POST', body: { word: 'borrowed', correct: false } });
     check(

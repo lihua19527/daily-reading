@@ -1246,6 +1246,32 @@ function seed() {
     });
     const hasSpellBtn = await cdp.eval(`!!document.getElementById('btnSpell')`);
     check('生词本有「拼写」按钮', hasSpellBtn === true);
+
+    // 造一个「今天到期」的已掌握词：直接写数据文件，故意不带 spellDue（老数据 = 今天该复习）
+    const spellSeed = JSON.parse(fs.readFileSync(marksFile, 'utf8'));
+    spellSeed.marks.push(
+      {
+        word: 'tutor',
+        cn: '导师；家庭教师',
+        pos: 'n.',
+        phonetic: '/ˈtjuːtə(r)/',
+        mastered: true,
+        masteredAt: new Date().toISOString(),
+        addedAt: new Date().toISOString(),
+      },
+      {
+        word: 'vessel',
+        cn: '船；容器',
+        pos: 'n.',
+        phonetic: '/ˈvesl/',
+        mastered: true,
+        masteredAt: new Date().toISOString(),
+        addedAt: new Date().toISOString(),
+      }
+    );
+    fs.writeFileSync(marksFile, JSON.stringify(spellSeed, null, 2));
+    await cdp.send('Page.navigate', { url: `${BASE}/marks.html` });
+    await waitFor(() => cdp.eval(`state.marks.some(m => m.word === 'tutor')`), { label: '重新载入带到期词的页面' });
     await cdp.eval(`document.getElementById('btnSpell').click(); 'ok'`);
     await waitFor(() => cdp.eval(`!document.getElementById('spellBox').hidden`), { label: '打开拼写面板' });
     const spell1 = JSON.parse(
@@ -1313,51 +1339,97 @@ function seed() {
     );
     check('点「不会」后把整个词显示出来', skipState.mask === skipWord && skipState.input === skipWord, JSON.stringify(skipState));
     check('点「不会」后有文字反馈', skipState.status.includes(skipWord), skipState.status);
+    // 等这一笔写回服务端，不然下一题可能拿到一个已经被打回学习中、却还在队列里的词
+    await waitFor(() => cdp.eval(`state.marks.find(m => m.word === ${JSON.stringify(skipWord)})?.mastered === false`), {
+      label: '跳过后的记录写回',
+    });
     await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
 
-    // 答对：按遗忘曲线推到下一天（第一次 1 天）
-    await cdp.eval(`fetch('/api/marks/mastered', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: 'ledger', mastered: true }) }).then(r => r.json()); 'ok'`);
-    await waitFor(() => cdp.eval(`state.marks.find(m => m.word === 'ledger')?.mastered === true`), { label: '重新标成已掌握' });
+    // 标成已掌握就算背过一次：直接排到明天，今天不再抽它
+    const ledgerSched = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        reps: state.marks.find(m => m.word === 'ledger')?.spellReps,
+        interval: state.marks.find(m => m.word === 'ledger')?.spellInterval,
+        due: state.marks.find(m => m.word === 'ledger')?.spellDue,
+        inQueue: spellQueue().some(m => m.word === 'ledger')
+      })`)
+    );
+    check(
+      '标成已掌握算背一次、排到明天',
+      ledgerSched.reps === 1 && ledgerSched.interval === 1 && Date.parse(ledgerSched.due) - Date.now() > 20 * 3600000,
+      JSON.stringify(ledgerSched)
+    );
+    check('今天不再抽刚掌握的词', ledgerSched.inQueue === false, JSON.stringify(ledgerSched));
+
+    // 有到期词就答对一道，验证排期往后滚
     await cdp.eval(`document.getElementById('btnSpell').click(); 'ok'`);
-    await waitFor(() => cdp.eval(`!document.getElementById('spellBox').hidden && !!spell.word`), { label: '再开拼写' });
-    await cdp.eval(`(() => { const i = document.getElementById('spellInput'); i.value = spell.word; document.getElementById('spellCheck').click(); return 'ok'; })()`);
-    await waitFor(() => cdp.eval(`document.getElementById('spellStatus').textContent.includes('再练')`), { label: '答对后给出下次时间' });
-    const spell3 = JSON.parse(
+    await waitFor(() => cdp.eval(`!document.getElementById('spellBox').hidden`), { label: '再开拼写' });
+    const beforeAns = JSON.parse(
       await cdp.eval(`JSON.stringify({
         word: spell.word,
-        status: document.getElementById('spellStatus').textContent,
-        due: state.marks.find(m => m.word === spell.word)?.spellDue,
-        reps: state.marks.find(m => m.word === spell.word)?.spellReps,
-        interval: state.marks.find(m => m.word === spell.word)?.spellInterval
+        reps: spell.word ? state.marks.find(m => m.word === spell.word)?.spellReps : null
       })`)
     );
-    const dueGap = Date.parse(spell3.due) - Date.now();
-    check('答对后写进了下次复习时间', spell3.reps === 1 && spell3.interval === 1 && dueGap > 20 * 3600000, JSON.stringify(spell3));
-    check('答对后提示几天后再练', /天后/.test(spell3.status) && spell3.status.includes(spell3.word), spell3.status);
+    if (beforeAns.word) {
+      await cdp.eval(`(() => { const i = document.getElementById('spellInput'); i.value = spell.word; document.getElementById('spellCheck').click(); return 'ok'; })()`);
+      await waitFor(() => cdp.eval(`document.getElementById('spellStatus').textContent.includes('再练')`), {
+        label: '答对后给出下次时间',
+      });
+      const spell3 = JSON.parse(
+        await cdp.eval(`JSON.stringify({
+          word: spell.word,
+          status: document.getElementById('spellStatus').textContent,
+          due: state.marks.find(m => m.word === spell.word)?.spellDue,
+          reps: state.marks.find(m => m.word === spell.word)?.spellReps,
+          interval: state.marks.find(m => m.word === spell.word)?.spellInterval
+        })`)
+      );
+      const dueGap = Date.parse(spell3.due) - Date.now();
+      check(
+        '答对后复习次数加一、排期往后',
+        spell3.reps === (beforeAns.reps || 0) + 1 && spell3.interval >= 1 && dueGap > 20 * 3600000,
+        JSON.stringify({ beforeAns, spell3 })
+      );
+      check('答对后提示几天后再练', /天后/.test(spell3.status) && spell3.status.includes(spell3.word), spell3.status);
 
-    // 排期没到就不该再抽到它
-    await cdp.eval(`document.getElementById('spellNext').click(); 'ok'`);
-    await waitFor(() => cdp.eval(`document.getElementById('spellPrompt').textContent.length > 0`), { label: '下一题' });
-    const spell4 = JSON.parse(
-      await cdp.eval(`JSON.stringify({
-        word: spell.word,
-        prompt: document.getElementById('spellPrompt').textContent,
-        due: spellQueue().length
-      })`)
-    );
-    check('刚练完的词不会马上再出现', spell4.word === null || spell4.word !== spell3.word, JSON.stringify(spell4));
-
-    // 空队列时的文案
-    if (spell4.word === null) {
-      check('队列空了给「今天没有要复习的词」', /今天没有要复习的词/.test(spell4.prompt), spell4.prompt);
+      // 排期没到就不该再抽到它
+      await cdp.eval(`document.getElementById('spellNext').click(); 'ok'`);
+      await waitFor(() => cdp.eval(`document.getElementById('spellPrompt').textContent.length > 0`), { label: '下一题' });
+      const spell4 = JSON.parse(
+        await cdp.eval(`JSON.stringify({
+          word: spell.word,
+          prompt: document.getElementById('spellPrompt').textContent
+        })`)
+      );
+      check('刚练完的词不会马上再出现', spell4.word === null || spell4.word !== spell3.word, JSON.stringify(spell4));
+      if (spell4.word === null) {
+        check('队列空了给「今天没有要复习的词」', /今天没有要复习的词/.test(spell4.prompt), spell4.prompt);
+      } else {
+        check('队列还有词时继续练', typeof spell4.word === 'string', JSON.stringify(spell4));
+      }
     } else {
-      check('队列还有词时继续练', typeof spell4.word === 'string', JSON.stringify(spell4));
+      const emptyPrompt = await cdp.eval(`document.getElementById('spellPrompt').textContent`);
+      check('队列空了给「今天没有要复习的词」', /今天没有要复习的词/.test(emptyPrompt), emptyPrompt);
     }
     await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
 
     // 双击词条卡片 = 直接标成已掌握，并盖一个章
     await cdp.eval(`document.querySelector('.view-switch [data-view="graph"]').click(); 'ok'`);
     await waitFor(() => cdp.eval(`document.querySelectorAll('.word-tile').length > 0`), { label: '切到网状视图' });
+
+    // 已掌握那一摞按「标掌握的日期」分组：今天点的就该落在今天那一组
+    const masteredDay = await cdp.eval(`(() => {
+      const tile = [...document.querySelectorAll('#masteredGrid .word-tile')].find(t => t.dataset.word === 'ledger');
+      if (!tile) return null;
+      const day = tile.closest('.tile-day');
+      return day ? day.querySelector('.day-head h4').textContent : null;
+    })()`);
+    const todayLabel = await cdp.eval(`(() => {
+      const d = new Date();
+      if (d.getHours() < 6) d.setDate(d.getDate() - 1);
+      return d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+    })()`);
+    check('已掌握按标掌握的日期分组', !!masteredDay && masteredDay.includes(todayLabel), JSON.stringify({ masteredDay, todayLabel }));
     const dblWord = await cdp.eval(`(() => { const t = document.querySelector('.word-tile'); t.click(); return t.dataset.word; })()`);
     await waitFor(() => cdp.eval(`!document.getElementById('wordCard').hidden`), { label: '点开词条卡片' });
     const plainOpen = JSON.parse(
