@@ -213,7 +213,7 @@ daily-reading/
 │  ├─ marks.html           生词本页（列表 / 网状两种视图，词条卡片）
 │  ├─ app.js / marks.js    两个页面各自的逻辑
 │  └─ style.css            两个页面共用一套样式
-├─ test/                  测试（169 + 185 项，用本地假模型）
+├─ test/                  测试（169 + 188 项，用本地假模型）
 └─ data/                  运行时自动创建，全部是明文 JSON
    ├─ config.json         API Key、文章偏好
    ├─ marks.json          我的生词本
@@ -230,7 +230,7 @@ daily-reading/
 
 ```bash
 node test/e2e.js        # 后端端到端（169 项）：真 OCR + 假模型 + 真 HTTP
-node test/ui-check.js   # 真浏览器（Edge/Chrome + CDP）跑完整流程（185 项）并截图
+node test/ui-check.js   # 真浏览器（Edge/Chrome + CDP）跑完整流程（188 项）并截图
 ```
 
 两个测试都用本地假模型，不消耗 token、不访问外网，也不会弹浏览器窗口。

@@ -1360,6 +1360,13 @@ function seed() {
     await waitFor(() => cdp.eval(`document.querySelectorAll('.word-tile').length > 0`), { label: '切到网状视图' });
     const dblWord = await cdp.eval(`(() => { const t = document.querySelector('.word-tile'); t.click(); return t.dataset.word; })()`);
     await waitFor(() => cdp.eval(`!document.getElementById('wordCard').hidden`), { label: '点开词条卡片' });
+    const plainOpen = JSON.parse(
+      await cdp.eval(`JSON.stringify({
+        pop: document.getElementById('wordCard').classList.contains('is-pop'),
+        stamps: document.querySelectorAll('.card-stamp').length
+      })`)
+    );
+    check('普通点开词条不带波浪和印章', plainOpen.pop === false && plainOpen.stamps === 0, JSON.stringify(plainOpen));
     const cardHint = await cdp.eval(`document.querySelector('.card-hint').textContent`);
     check('词条卡片上写着双击能标已掌握', /双击/.test(cardHint) && /已掌握/.test(cardHint), cardHint);
     await cdp.eval(`(() => {
@@ -1376,6 +1383,15 @@ function seed() {
     check('双击真的标成已掌握', true);
     await waitFor(() => cdp.eval(`document.getElementById('wordCard').hidden`), { label: '盖章后收起词条' });
     check('盖章后词条自动收起', true, dblWord);
+
+    // 点普通卡片上的「已掌握」，词条卡片也要演同一套动效
+    await cdp.eval(`(() => { const t = document.querySelector('.word-tile'); t.click(); return 'ok'; })()`);
+    await waitFor(() => cdp.eval(`!document.getElementById('wordCard').hidden`), { label: '再点开一张卡' });
+    await cdp.eval(`document.querySelector('.word-tile .tile-act[data-act="master"]').click(); 'ok'`);
+    await waitFor(() => cdp.eval(`document.querySelectorAll('.card-stamp').length > 0`), { label: '点卡片上的已掌握也盖章' });
+    check('点普通卡片的「已掌握」也盖章', true);
+    await waitFor(() => cdp.eval(`document.getElementById('wordCard').hidden`), { label: '动效后收起词条' });
+    check('点普通卡片的「已掌握」后词条收起', true);
     await cdp.eval(`document.querySelector('.view-switch [data-view="list"]').click(); 'ok'`);
 
     // 空态文案：清空后两段都该给提示

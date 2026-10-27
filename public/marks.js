@@ -260,6 +260,8 @@ function openCard(word) {
   const card = $('#wordCard');
   if (!m || !card) return;
   card.dataset.word = word;
+  // 普通点开：只把卡片摆出来，不留上一次「已掌握」的波浪和弹跳
+  card.classList.remove('is-pop');
   $('#wordCardBody').innerHTML = cardHTML(m);
   card.hidden = false;
   placeCardNearCard(card, word);
@@ -270,6 +272,7 @@ function closeCard() {
   if (card) {
     card.hidden = true;
     card.classList.remove('is-sheet');
+    card.classList.remove('is-pop');
     card.style.left = '';
     card.style.top = '';
     card.style.right = '';
@@ -444,6 +447,8 @@ document.addEventListener('click', async (e) => {
     }
     if (btn.dataset.act === 'master') {
       const next = btn.dataset.next === '1';
+      // 标成已掌握且词条卡片正开着：跟双击一样演一遍盖章，再收起
+      if (next && cardOpen) return masterWithEffect($('#wordCard'), word);
       await setMastered(word, next);
       // 置为已掌握（或退回学习）后这个词就换了一摞，词条卡片跟着收起，别让旧卡片留在屏幕上
       if (cardOpen) closeCard();
@@ -472,6 +477,19 @@ function stampMastered(card) {
   setTimeout(() => stamp.remove(), 900);
 }
 
+/** 标成已掌握：先演弹跳 + 蓝环 + 盖章，再收卡片 */
+async function masterWithEffect(card, word) {
+  card.classList.remove('is-pop');
+  void card.offsetWidth; // 强制重排，动画才能重播
+  card.classList.add('is-pop');
+  stampMastered(card);
+  await setMastered(word, true);
+  await new Promise((r) => setTimeout(r, 520));
+  card.classList.remove('is-pop');
+  closeCard();
+  toast(`「${word}」挪到已掌握`);
+}
+
 /* 双击词条卡片 = 直接标成已掌握，带一下盖章动效 */
 document.addEventListener('dblclick', async (e) => {
   const card = e.target.closest('#wordCard');
@@ -481,16 +499,8 @@ document.addEventListener('dblclick', async (e) => {
   const m = state.marks.find((x) => x.word === word);
   if (!m) return;
   if (m.mastered) return toast(`「${word}」已经在「已掌握」里了`);
-  card.classList.remove('is-pop');
-  void card.offsetWidth; // 重启动画
-  card.classList.add('is-pop');
-  stampMastered(card);
   try {
-    await setMastered(word, true);
-    // 让盖章动效先演完再收卡片，不然一闪就没了
-    await new Promise((r) => setTimeout(r, 520));
-    closeCard();
-    toast(`「${word}」挪到已掌握`);
+    await masterWithEffect(card, word);
   } catch (err) {
     card.classList.remove('is-pop');
     toast(err.message || String(err), true);
