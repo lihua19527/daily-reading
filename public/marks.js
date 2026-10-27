@@ -384,12 +384,11 @@ function render() {
 
 /* ---------- 交互 ---------- */
 function speak(word) {
-  if (!window.speechSynthesis) return toast('当前浏览器不支持朗读', true);
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(word);
-  u.lang = 'en-US';
-  u.rate = 0.92;
-  window.speechSynthesis.speak(u);
+  if (!window.DRSpeech || !window.DRSpeech.available) return toast('当前浏览器不支持朗读', true);
+  window.DRSpeech.say(word, {
+    onError: (err) => toast(`朗读失败：${err}`, true),
+    onSilent: () => toast('没有听到声音？检查一下系统默认输出设备，或在「设置 → 时间和语言 → 语音」里装一个英文语音包', true),
+  });
 }
 
 async function setMastered(word, next) {

@@ -585,31 +585,33 @@ function findGlossary(map, key) {
 }
 
 // ------------------------------------------------------------------ 朗读
+const speechHint = () =>
+  toast('没有听到声音？检查一下系统默认输出设备，或在「设置 → 时间和语言 → 语音」里装一个英文语音包', true);
+
 function speak(text, paraEl) {
-  if (!window.speechSynthesis) return toast('当前浏览器不支持朗读', true);
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'en-US';
-  u.rate = 0.92;
+  if (!window.DRSpeech || !window.DRSpeech.available) return toast('当前浏览器不支持朗读', true);
   $$('.para').forEach((p) => p.classList.remove('playing'));
   if (paraEl) paraEl.classList.add('playing');
-  u.onend = () => $$('.para').forEach((p) => p.classList.remove('playing'));
-  window.speechSynthesis.speak(u);
+  const u = window.DRSpeech.say(text, {
+    onError: (err) => toast(`朗读失败：${err}`, true),
+    onSilent: speechHint,
+  });
+  if (u) u.onend = () => $$('.para').forEach((p) => p.classList.remove('playing'));
 }
 
 function speakAll(a) {
-  if (!window.speechSynthesis) return toast('当前浏览器不支持朗读', true);
-  window.speechSynthesis.cancel();
+  if (!window.DRSpeech || !window.DRSpeech.available) return toast('当前浏览器不支持朗读', true);
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  synth.resume();
   a.paragraphs.forEach((p, i) => {
-    const u = new SpeechSynthesisUtterance(p.en);
-    u.lang = 'en-US';
-    u.rate = 0.92;
+    const u = window.DRSpeech.utter(p.en);
     u.onstart = () => {
       $$('.para').forEach((e) => e.classList.remove('playing'));
       $(`.para[data-para="${i}"]`)?.classList.add('playing');
     };
     if (i === a.paragraphs.length - 1) u.onend = () => $$('.para').forEach((e) => e.classList.remove('playing'));
-    window.speechSynthesis.speak(u);
+    synth.speak(u);
   });
 }
 
