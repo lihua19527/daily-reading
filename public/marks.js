@@ -129,6 +129,23 @@ function groupsHTML(groups, mastered) {
 /* ---------- 网状视图：一张词一张卡片，三列排开（和剪藏台的卡片墙一个路数） ---------- */
 const ACCENTS = ['blue', 'red', 'yellow'];
 
+/** 这个词现在的色带颜色：直接读页面上那张卡；读不到再按数据推算一遍。
+ *  卡片会因为「已掌握」上下挪位而换颜色，所以每次现算，不缓存 */
+function accentFor(word) {
+  const tile = Array.from(document.querySelectorAll('.word-tile')).find((t) => t.dataset.word === word);
+  if (tile && tile.dataset.accent) return tile.dataset.accent;
+  const m = state.marks.find((x) => x.word === word);
+  if (!m) return ACCENTS[0];
+  const mastered = !!m.mastered;
+  const pool = state.marks.filter((x) => !!x.mastered === mastered);
+  const groups = groupByDay(pool, (x) => (mastered ? x.masteredAt || x.addedAt : x.addedAt));
+  for (const g of groups) {
+    const i = g.items.findIndex((x) => x.word === word);
+    if (i >= 0) return ACCENTS[i % ACCENTS.length];
+  }
+  return ACCENTS[0];
+}
+
 function examplesShort(m) {
   return examplesOf(m)[0] || '';
 }
@@ -224,7 +241,7 @@ function cardHTML(m) {
       <button class="btn tiny" type="button" data-act="master" data-next="${m.mastered ? '0' : '1'}">${m.mastered ? '退回学习' : '已掌握'}</button>
       <button class="btn tiny danger" type="button" data-act="remove">删除</button>
     </div>
-    <p class="card-hint">${m.mastered ? '双击这张卡没有用，它已经会了' : '双击这张卡 = 标成「已掌握」'}</p>`;
+    <p class="card-hint">${m.mastered ? '长按或双击这张卡没有用，它已经会了' : '双击或长按这张卡 = 标成「已掌握」'}</p>`;
 }
 
 /** 词条卡片贴在按下那张卡片的旁边：右边放不下就翻到左边，纵向夹在视口里 */
@@ -261,6 +278,8 @@ function openCard(word) {
   const card = $('#wordCard');
   if (!m || !card) return;
   card.dataset.word = word;
+  // 色带、例句方块、长按边框都跟这张卡当前的色带走
+  card.dataset.accent = accentFor(word);
   // 普通点开：只把卡片摆出来，不留上一次「已掌握」的波浪和弹跳
   card.classList.remove('is-pop');
   $('#wordCardBody').innerHTML = cardHTML(m);
@@ -423,6 +442,8 @@ document.addEventListener('click', async (e) => {
   if (!btn) {
     const tile = e.target.closest('.word-tile');
     if (tile) {
+      // 长按刚盖过章，松手补的这一次点击不要再开词条
+      if (Date.now() < suppressClickUntil) return;
       // 再点同一张卡就收起词条，不用去够右上角的 ×
       const open = !$('#wordCard').hidden && $('#wordCard').dataset.word === tile.dataset.word;
       return open ? closeCard() : openCard(tile.dataset.word);
@@ -489,6 +510,79 @@ async function masterWithEffect(card, word) {
   closeCard();
   toast(`「${word}」挪到已掌握`);
 }
+
+/* 长按卡片 = 标成已掌握：按住 0.8 秒，线走满就盖章。
+   普通卡片和详情卡片都认；中途松手、移开 12px、切窗口都会取消。
+   视效要等按住 160ms 才亮起来——顺手点一下只开卡片，不闪进度条 */
+const HOLD_MS = 800;
+const HOLD_VISUAL_MS = 160;
+let hold = null;
+let suppressClickUntil = 0;
+
+function cancelHold() {
+  if (!hold) return;
+  clearTimeout(hold.timer);
+  clearTimeout(hold.visualTimer);
+  hold.el.classList.remove('is-holding');
+  if (hold.bar.parentNode) hold.bar.remove();
+  window.removeEventListener('pointermove', hold.onMove);
+  window.removeEventListener('blur', cancelHold);
+  hold = null;
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (e.button != null && e.button !== 0) return;
+  if (e.target.closest('button, a, input, textarea, .view-switch')) return;
+  const el = e.target.closest('.word-tile, #wordCard');
+  if (!el) return;
+  if (el.id === 'wordCard' && el.hidden) return;
+  const word = el.dataset.word;
+  const m = state.marks.find((x) => x.word === word);
+  if (!m || m.mastered) return; // 已经在已掌握里的词不用长按
+  cancelHold();
+  const bar = document.createElement('span');
+  bar.className = 'hold-bar';
+  bar.style.animationDuration = `${HOLD_MS}ms`;
+  // 进度条 160ms 后才挂上去，但动画从按下那一刻算起，走完的时间点和长按触发对齐
+  bar.style.animationDelay = `-${HOLD_VISUAL_MS}ms`;
+  bar.setAttribute('aria-hidden', 'true');
+  // 进度条放在正文顶上（色带正下方），颜色跟这张卡的色带走
+  const barHost = el.querySelector('.tile-body') || el;
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const onMove = (ev) => {
+    if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 12) cancelHold();
+  };
+  window.addEventListener('pointermove', onMove, { passive: true });
+  window.addEventListener('blur', cancelHold);
+  hold = {
+    el,
+    bar,
+    onMove,
+    visualTimer: setTimeout(() => {
+      if (!hold || hold.el !== el) return;
+      barHost.appendChild(bar);
+      el.classList.add('is-holding');
+    }, HOLD_VISUAL_MS),
+    timer: setTimeout(async () => {
+      const target = hold && hold.el;
+      cancelHold();
+      if (!target) return;
+      // 松手后浏览器还会补一个 click，别让它再打开词条
+      suppressClickUntil = Date.now() + 700;
+      try {
+        await masterWithEffect(target, word);
+      } catch (err) {
+        toast(err.message || String(err), true);
+      }
+    }, HOLD_MS),
+  };
+});
+document.addEventListener('pointerup', cancelHold, true);
+document.addEventListener('pointercancel', cancelHold, true);
+document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest('.word-tile, #wordCard')) e.preventDefault();
+});
 
 /* 双击词条卡片 = 直接标成已掌握，带一下盖章动效 */
 document.addEventListener('dblclick', async (e) => {

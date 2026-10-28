@@ -1464,6 +1464,139 @@ function seed() {
     check('点普通卡片的「已掌握」也盖章', true);
     await waitFor(() => cdp.eval(`document.getElementById('wordCard').hidden`), { label: '动效后收起词条' });
     check('点普通卡片的「已掌握」后词条收起', true);
+    // 详情卡片：顶部色条、例句方块要跟被点那张卡的色带同色
+    const accentCheck = JSON.parse(
+      await cdp.eval(`(() => {
+        const t = document.querySelector('#learningGrid .word-tile');
+        const accent = t.dataset.accent;
+        t.click();
+        const card = document.getElementById('wordCard');
+        const dot = document.querySelector('#wordCard .card-ex li');
+        const label = document.querySelector('#wordCard .row-extra i');
+        return JSON.stringify({
+          tile: accent,
+          card: card.dataset.accent,
+          before: getComputedStyle(card, '::before').backgroundColor,
+          dot: dot ? getComputedStyle(dot, '::before').backgroundColor : '',
+          label: label ? getComputedStyle(label).borderLeftColor : '',
+        });
+      })()`)
+    );
+    check('详情卡片的色条跟着这张卡的色带走', accentCheck.card === accentCheck.tile, `${accentCheck.tile} / ${accentCheck.before}`);
+    check(
+      '详情卡片的色条和例句方块同色',
+      accentCheck.dot ? accentCheck.before === accentCheck.dot : true,
+      accentCheck.dot || '这个词还没例句'
+    );
+    check(
+      '详情卡片的「考研常考 / 搭配」跟着色带走',
+      accentCheck.label ? accentCheck.label === accentCheck.before : true,
+      accentCheck.label || '这个词没有考研常考 / 搭配'
+    );
+    await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
+    await new Promise((r) => setTimeout(r, 300));
+    // 长按卡片也标成已掌握：普通卡片 + 详情卡片（0.8 秒那套）
+    const tilePoint = async (selector) =>
+      JSON.parse(
+        await cdp.eval(`(() => {
+          const t = document.querySelector(${JSON.stringify(selector)});
+          const r = t.getBoundingClientRect();
+          return JSON.stringify({ word: t.dataset.word, x: r.left + r.width / 2, y: r.top + 90 });
+        })()`)
+      );
+    const holdPress = (p) =>
+      cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', buttons: 1, clickCount: 1 });
+    const holdRelease = (p) =>
+      cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', buttons: 0, clickCount: 1 });
+
+    const holdTile = await tilePoint('#learningGrid .word-tile');
+    await holdPress(holdTile);
+    await new Promise((r) => setTimeout(r, 60));
+    check(
+      '刚按下去还不闪进度条（顺手点一下不该有视效）',
+      (await cdp.eval(`document.querySelectorAll('.word-tile.is-holding, .hold-bar').length`)) === 0
+    );
+    await new Promise((r) => setTimeout(r, 220));
+    check(
+      '按住超过 160ms 卡片才亮起来并走进度条',
+      (await cdp.eval(`document.querySelectorAll('.word-tile.is-holding .hold-bar').length`)) === 1
+    );
+    // 长按的边框和进度线要跟这张卡的色带同色
+    check(
+      '长按的边框和进度线跟着色带走',
+      await cdp.eval(`(() => {
+        const t = document.querySelector('.word-tile.is-holding');
+        const bar = t && t.querySelector('.tile-body > .hold-bar');
+        if (!bar) return false;
+        const accent = t.dataset.accent;
+        const want = accent === 'blue' ? [35, 75, 196] : accent === 'red' ? [217, 54, 37] : [200, 150, 12];
+        const parse = (v) => (v.match(/\\d+/g) || []).slice(0, 3).map(Number);
+        const near = (v) => parse(v).every((n, i) => Math.abs(n - want[i]) <= 3);
+        return near(getComputedStyle(t).outlineColor) && near(getComputedStyle(bar).backgroundColor);
+      })()`),
+      holdTile.word
+    );
+    await new Promise((r) => setTimeout(r, 420));
+    // 进度条先快后慢：时长 0.8s、缓动不是 linear
+    const barTiming = JSON.parse(
+      await cdp.eval(`(() => {
+        const bar = document.querySelector('.word-tile.is-holding .tile-body > .hold-bar');
+        if (!bar) return JSON.stringify({ ok: false });
+        const cs = getComputedStyle(bar);
+        return JSON.stringify({ ok: true, dur: cs.animationDuration, ease: cs.animationTimingFunction });
+      })()`)
+    );
+    check(
+      '进度条改成 0.8 秒、先快后慢',
+      barTiming.ok && barTiming.dur === '0.8s' && barTiming.ease !== 'linear',
+      `${barTiming.dur} / ${barTiming.ease}`
+    );
+    await new Promise((r) => setTimeout(r, 220));
+    await holdRelease(holdTile);
+    await waitFor(() => cdp.eval(`state.marks.find((m) => m.word === ${JSON.stringify(holdTile.word)})?.mastered === true`), {
+      label: '长按写进已掌握',
+    });
+    check('长按普通卡片标成已掌握', true, holdTile.word);
+    await new Promise((r) => setTimeout(r, 800));
+    check('长按后没有顺手打开词条', await cdp.eval(`document.getElementById('wordCard').hidden`));
+
+    // 短按松手：只打开词条，不标已掌握
+    const shortTile = await tilePoint('#learningGrid .word-tile');
+    await holdPress(shortTile);
+    await new Promise((r) => setTimeout(r, 120));
+    await holdRelease(shortTile);
+    await new Promise((r) => setTimeout(r, 500));
+    check(
+      '短按不会标成已掌握',
+      (await cdp.eval(`state.marks.find((m) => m.word === ${JSON.stringify(shortTile.word)})?.mastered`)) === false
+    );
+    check('短按松手后没有残留的进度条', (await cdp.eval(`document.querySelectorAll('.hold-bar').length`)) === 0);
+    await cdp.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'`);
+    await new Promise((r) => setTimeout(r, 300));
+
+    // 详情卡片长按
+    await cdp.eval(`(() => { const t = document.querySelector('#learningGrid .word-tile'); t.click(); return 'ok'; })()`);
+    await waitFor(() => cdp.eval(`!document.getElementById('wordCard').hidden`), { label: '点开一张卡准备长按' });
+    const cardWord = await cdp.eval(`document.getElementById('wordCard').dataset.word`);
+    const cardPoint = JSON.parse(
+      await cdp.eval(`(() => {
+        const el = document.querySelector('#wordCard .card-cn');
+        const r = el.getBoundingClientRect();
+        return JSON.stringify({ x: r.left + r.width / 2, y: r.top + 4 });
+      })()`)
+    );
+    await holdPress(cardPoint);
+    await new Promise((r) => setTimeout(r, 260));
+    check('长按详情卡片时卡片也亮起来', await cdp.eval(`document.getElementById('wordCard').classList.contains('is-holding')`));
+    await new Promise((r) => setTimeout(r, 620));
+    await holdRelease(cardPoint);
+    await waitFor(() => cdp.eval(`state.marks.find((m) => m.word === ${JSON.stringify(cardWord)})?.mastered === true`), {
+      label: '长按详情卡片写进已掌握',
+    });
+    check('长按详情卡片也标成已掌握', true, cardWord);
+    await waitFor(() => cdp.eval(`document.getElementById('wordCard').hidden`), { label: '长按后详情卡片收起' });
+    check('长按后详情卡片自动收起', true);
+
     await cdp.eval(`document.querySelector('.view-switch [data-view="list"]').click(); 'ok'`);
 
     // 空态文案：清空后两段都该给提示

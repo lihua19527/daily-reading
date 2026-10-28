@@ -903,10 +903,11 @@ kbd {
 .tile-day { margin-top: 26px; }
 .tile-day:first-child { margin-top: 18px; }
 .word-tile {
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; position: relative;
   border: 1px solid var(--ink); background: var(--paper);
   cursor: pointer; text-align: left; padding: 0;
-  transition: background-color .15s ease;
+  transition: background-color .15s ease, transform .12s ease;
+  -webkit-touch-callout: none; user-select: none;
 }
 .word-tile[data-accent='blue'] { --accent: var(--blue); }
 .word-tile[data-accent='red'] { --accent: var(--red); }
@@ -918,6 +919,7 @@ kbd {
   display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 10px 20px;
   background: var(--accent); color: var(--paper-white); border-bottom: 1px solid var(--ink);
   font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+  position: relative;
 }
 .word-tile[data-accent='yellow'] .tile-spine { color: var(--ink); }
 .tile-no { font-variant-numeric: tabular-nums; }
@@ -985,7 +987,8 @@ kbd {
   width: auto; max-height: 62vh; box-shadow: 0 -6px 0 rgba(17, 17, 17, .12);
 }
 .word-card::before {
-  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 6px; background: var(--red);
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 6px;
+  background: var(--accent-c, var(--red));
 }
 .word-card-close {
   position: absolute; top: 12px; right: 12px; width: 26px; height: 26px;
@@ -995,6 +998,32 @@ kbd {
 .word-card-close:hover { background: var(--red); border-color: var(--red); color: #fff; }
 /* 双击标成已掌握：卡片弹一下 + 正中盖个章 */
 .word-card.is-pop { animation: card-pop .26s cubic-bezier(.2, 1.4, .3, 1), card-flash .5s ease-out; }
+/* 长按卡片：边框颜色跟这张卡的色带走，一条线走满就盖章 */
+.word-tile[data-accent='blue'],
+.word-card[data-accent='blue'] { --accent-c: var(--blue); --accent-strong: var(--blue); }
+.word-tile[data-accent='red'],
+.word-card[data-accent='red'] { --accent-c: var(--red); --accent-strong: var(--red); }
+/* 黄在白纸上太浅，描边和进度线用同一支黄的深一档，仍看得出是“这张卡的黄” */
+.word-tile[data-accent='yellow'],
+.word-card[data-accent='yellow'] { --accent-c: var(--yellow); --accent-strong: #c8960c; }
+.is-holding,
+.word-tile.is-holding,
+.word-card.is-holding { outline: 3px solid var(--accent-strong, var(--accent-c, var(--blue))); outline-offset: -3px; }
+.word-tile.is-holding { transform: translateY(-2px); }
+.hold-bar {
+  position: absolute; left: 0; bottom: 0; height: 5px; width: 0;
+  background: var(--accent-strong, var(--accent-c, var(--blue))); pointer-events: none;
+  /* 先快后慢：开头走得利落，最后四分之一慢慢爬完，不是按时间等比走 */
+  animation: hold-fill .8s cubic-bezier(.35, .45, .5, 1) forwards;
+}
+/* 卡片墙的卡片很高，进度条画在色带正下方，才看得见 */
+.tile-body { position: relative; }
+.tile-body > .hold-bar { top: 0; bottom: auto; height: 5px; }
+@keyframes hold-fill {
+  from { width: 0; }
+  to { width: 100%; }
+}
+.word-tile.is-pop { animation: card-flash .5s ease-out; }
 @keyframes card-pop {
   0% { transform: scale(1); }
   45% { transform: scale(1.018); }
@@ -1037,7 +1066,8 @@ kbd {
 .card-ex { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .card-ex li { position: relative; padding-left: 16px; font-size: 12.5px; line-height: 1.7; }
 .card-ex li::before {
-  content: ''; position: absolute; left: 0; top: 8px; width: 7px; height: 7px; background: var(--red);
+  content: ''; position: absolute; left: 0; top: 8px; width: 7px; height: 7px;
+  background: var(--accent-c, var(--red));
 }
 .card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 16px; }
 
@@ -1081,6 +1111,11 @@ kbd {
   display: inline-block; margin-right: 7px; padding: 0 4px;
   border-left: 3px solid var(--yellow); background: rgba(244, 196, 52, .18);
   font-style: normal; font-weight: 700; color: var(--ink); font-size: 10.5px;
+}
+/* 详情卡片里的「考研常考 / 搭配」跟着这张卡的色带走 */
+.word-card .row-extra i {
+  border-left-color: var(--accent-c, var(--yellow));
+  background: color-mix(in srgb, var(--accent-c, var(--yellow)) 20%, transparent);
 }
 .row-note {
   margin: 8px 0 0; padding-left: 9px; border-left: 3px solid var(--grid);
