@@ -7,6 +7,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { timingSafeEqual } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
@@ -18,6 +19,14 @@ const { lookupWord } = require('./lib/dict');
 const PORT = Number(process.env.PORT || 8787);
 const HOST = '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const ANDROID_SESSION = process.env.DR_ANDROID_SESSION;
+
+function isAndroidRequest(req) {
+  const host = `${HOST}:${server.address()?.port}`;
+  if (req.headers.host !== host || (req.headers.origin && req.headers.origin !== `http://${host}`)) return false;
+  const session = /(?:^|;\s*)drSession=([a-f0-9]{32})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
+  return Boolean(session && timingSafeEqual(Buffer.from(session), Buffer.from(ANDROID_SESSION)));
+}
 
 // ---------------------------------------------------------------- 工具
 
@@ -178,6 +187,55 @@ function publicConfig(cfg) {
   };
 }
 
+async function finishOcr(res, cfg, body, ocr) {
+  const failed = (ocr.results || []).filter((r) => r.error);
+  const describeError = (e) => {
+    if (e === 'HEIC_NOT_SUPPORTED') return 'iPhone 的 HEIC 格式认不了，请先转成 JPG/PNG';
+    if (e === 'FILE_NOT_FOUND') return '临时文件不见了';
+    if (e === 'TOO_LARGE') return '图太高或太宽（超过 10000 像素），自动切块没成功，请把它分成两张再传';
+    return e;
+  };
+
+  // 整批都失败时，把真实原因说出来，别让用户看到「没识别出英文单词」这种误导性提示
+  if (!ocr.results?.length || failed.length === ocr.results.length) {
+    const first = describeError(failed[0]?.error) || '没有可识别的图片';
+    return fail(res, `图片识别失败：${first}（PNG / JPG 最稳）`, 500);
+  }
+
+  const extracted = extractWords(ocr.results, { ratio: Number(body.ratio) || 0.72 });
+  let words = extracted.words;
+  let cleaned = false;
+
+  // 可选：让模型修 OCR 拼写错误、剔除界面噪声
+  const wantFix = body.fix !== false && cfg.prefs.ocrFix !== false && cfg.deepseek.apiKey;
+  if (wantFix && words.length) {
+    try {
+      const fixed = await cleanOcrWords({ config: cfg, words });
+      if (fixed.words.length) {
+        words = fixed.words;
+        cleaned = true;
+      }
+    } catch (e) {
+      // 校正失败不影响主流程，把原始结果交给用户
+      cleaned = false;
+    }
+  }
+
+  return ok(res, {
+    engine: ocr.engine,
+    images: ocr.results.map((r) => ({ file: r.file, lines: (r.lines || []).length, error: r.error })),
+    perImage: extracted.perImage || [],
+    failedImages: failed.map((r) => ({ file: r.file, error: describeError(r.error) })),
+    rawLines: ocr.results.flatMap((r) => (r.lines || []).map((l) => l.text)),
+    words: words.map((w) => ({ word: w, meaning: '' })),
+    strict: extracted.strict,
+    cleaned,
+    hint: words.length
+      ? `从 ${ocr.results.length} 张图识别出 ${words.length} 个候选词${cleaned ? '（已用 AI 校正拼写）' : ''}${failed.length ? `，其中 ${failed.length} 张识别失败已跳过` : ''}，确认后保存。`
+      : `处理了 ${ocr.results.length} 张图，但没找出英文单词。${failed.length ? `其中 ${failed.length} 张识别失败。` : '确认截图里单词清晰、没有被裁掉。'}`,
+  });
+}
+
 async function handleApi(req, res, url) {
   const cfg = store.loadConfig();
   const p = url.pathname;
@@ -291,8 +349,16 @@ async function handleApi(req, res, url) {
     return ok(res, { cleared: true, date });
   }
 
+  if (ANDROID_SESSION && p === '/api/android/ocr' && req.method === 'POST') {
+    const body = await readBody(req, 4 * 1024 * 1024);
+    const results = Array.isArray(body.results) ? body.results : [];
+    if (!results.length || results.length > 12) return fail(res, '请选择 1 至 12 张截图');
+    return finishOcr(res, cfg, body, { engine: 'Android OCR', results });
+  }
+
   // ---- 图片 OCR：把手机截图里的单词认出来 ----
   if (p === '/api/ocr' && req.method === 'POST') {
+    if (ANDROID_SESSION) return fail(res, '请使用 Android 应用的截图入口');
     const body = await readBody(req);
     const images = Array.isArray(body.images) ? body.images : [];
     if (!images.length) return fail(res, '没有收到图片');
@@ -312,52 +378,7 @@ async function handleApi(req, res, url) {
         return fail(res, msg, 500);
       }
 
-      const extracted = extractWords(ocr.results, { ratio: Number(body.ratio) || 0.72 });
-      const failed = (ocr.results || []).filter((r) => r.error);
-      const describeError = (e) => {
-        if (e === 'HEIC_NOT_SUPPORTED') return 'iPhone 的 HEIC 格式认不了，请先转成 JPG/PNG';
-        if (e === 'FILE_NOT_FOUND') return '临时文件不见了';
-        if (e === 'TOO_LARGE') return '图太高或太宽（超过 10000 像素），自动切块没成功，请把它分成两张再传';
-        return e;
-      };
-
-      // 整批都失败时，把真实原因说出来，别让用户看到「没识别出英文单词」这种误导性提示
-      if (!ocr.results?.length || failed.length === ocr.results.length) {
-        const first = describeError(failed[0]?.error) || '没有可识别的图片';
-        return fail(res, `图片识别失败：${first}（PNG / JPG 最稳）`, 500);
-      }
-
-      let words = extracted.words;
-      let cleaned = false;
-
-      // 可选：让模型修 OCR 拼写错误、剔除界面噪声
-      const wantFix = body.fix !== false && cfg.prefs.ocrFix !== false && cfg.deepseek.apiKey;
-      if (wantFix && words.length) {
-        try {
-          const fixed = await cleanOcrWords({ config: cfg, words });
-          if (fixed.words.length) {
-            words = fixed.words;
-            cleaned = true;
-          }
-        } catch (e) {
-          // 校正失败不影响主流程，把原始结果交给用户
-          cleaned = false;
-        }
-      }
-
-      return ok(res, {
-        engine: ocr.engine,
-        images: ocr.results.map((r) => ({ file: r.file, lines: (r.lines || []).length, error: r.error })),
-        perImage: extracted.perImage || [],
-        failedImages: failed.map((r) => ({ file: r.file, error: describeError(r.error) })),
-        rawLines: ocr.results.flatMap((r) => (r.lines || []).map((l) => l.text)),
-        words: words.map((w) => ({ word: w, meaning: '' })),
-        strict: extracted.strict,
-        cleaned,
-        hint: words.length
-          ? `从 ${ocr.results.length} 张图识别出 ${words.length} 个候选词${cleaned ? '（已用 AI 校正拼写）' : ''}${failed.length ? `，其中 ${failed.length} 张识别失败已跳过` : ''}，确认后保存。`
-          : `处理了 ${ocr.results.length} 张图，但没找出英文单词。${failed.length ? `其中 ${failed.length} 张识别失败。` : '确认截图里单词清晰、没有被裁掉。'}`,
-      });
+      return await finishOcr(res, cfg, body, ocr);
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -563,8 +584,12 @@ async function handleApi(req, res, url) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
   try {
+    if (ANDROID_SESSION && !isAndroidRequest(req)) return fail(res, '请从每日阅读应用打开', 403);
+    if (ANDROID_SESSION) {
+      res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
+    }
+    const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     return serveStatic(req, res, decodeURIComponent(url.pathname));
   } catch (err) {
@@ -617,7 +642,7 @@ function start(port = PORT, host = HOST) {
       console.log(`\n  每日阅读 · 考研英语 —— 已启动`);
       console.log(`  →  http://${host}:${port}\n`);
       console.log(`  数据目录: ${store.DATA_DIR}（${summary()}）`);
-      console.log(`  截图识别: Windows 自带 OCR（本地，不联网）`);
+      console.log(`  截图识别: ${ANDROID_SESSION ? 'Android OCR' : 'Windows 自带 OCR'}（本地，不联网）`);
       console.log(`  停止服务: Ctrl + C\n`);
       if (process.env.BCZ_OPEN_BROWSER === '1') openBrowser(null, { port });
       resolve(server.address());

@@ -7,6 +7,11 @@
  *   4. 静默失败完全没有反馈——用户不知道是没声音还是没点中。
  * 这里把这四件事一次处理掉。 */
 (function () {
+  if (window.DRAndroid) {
+    window.DRSpeech = window.DRAndroid.speech;
+    return;
+  }
+
   const synth = window.speechSynthesis;
 
   /* voices 是异步加载的，第一次调用常常是空数组。
@@ -73,7 +78,14 @@
     return u;
   }
 
-  window.DRSpeech = { available: !!synth, say, utter, pickVoice };
+  window.DRSpeech = {
+    available: !!synth, say, utter, pickVoice,
+    play: (utterance) => synth?.speak(utterance),
+    stop() {
+      synth?.cancel();
+      synth?.resume();
+    },
+  };
 
   /* 插拔耳机 / 切换蓝牙时，Chromium 有时仍把语音往旧设备送，表现就是“静音”。
      设备一变就把队列清掉、解除 paused，下一次点朗读才会重新落到当前设备上。 */

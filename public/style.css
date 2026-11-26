@@ -1389,3 +1389,17 @@ body.spell-open { overflow: hidden; }
   .spell-prompt { font-size: 20px; }
   .spell-input { font-size: 17px; }
 }
+
+@media (max-width: 560px) {
+  .android-app .site-header .page-nav {
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .android-app .hero { padding-top: 26px; }
+  .android-app .hero-art { display: none; }
+  .android-app .intake-body input,
+  .android-app .intake-body textarea,
+  .android-app .modal input,
+  .android-app .spell input { font-size: 16px; }
+}

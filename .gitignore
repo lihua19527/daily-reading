@@ -26,3 +26,10 @@ desktop.ini
 # 日志
 *.log
 npm-debug.log*
+
+# Android 本地构建产物与下载的运行时
+android/.gradle/
+android/**/.cxx/
+android/**/build/
+android/local.properties
+android/node-runtime/

@@ -5,6 +5,8 @@
 
 > 界面截图：[docs/screenshot-exam.png](docs/screenshot-exam.png)（真题模式的实际输出）
 
+安卓手机可安装独立应用，使用和构建方法见 [安卓版说明](android/README.md)。下文记录 Windows 版用法。
+
 ## 先看这张表：你能不能用
 
 | | 要求 |

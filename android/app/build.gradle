@@ -1,0 +1,67 @@
+plugins {
+    id 'com.android.application' version '8.8.2'
+}
+
+def repository = rootProject.projectDir.parentFile
+def runtimeAssets = layout.buildDirectory.dir('generated/reader-assets')
+def androidAbi = providers.gradleProperty('androidAbi').getOrElse('arm64-v8a')
+def runtimeVariant = ['arm64-v8a': 'arm64', 'x86_64': 'x64'][androidAbi]
+if (!runtimeVariant) throw new GradleException("Unsupported androidAbi: ${androidAbi}")
+def nodeRuntime = rootProject.layout.projectDirectory.dir("node-runtime/libnode_android_${runtimeVariant}")
+
+def packageReader = tasks.register('packageReader', Sync) {
+    from(repository) {
+        include 'server.js', 'lib/*.js', 'public/**', 'LICENSE'
+        into 'reader'
+    }
+    from(rootProject.file('runtime')) {
+        include 'launch.js'
+        into 'reader'
+    }
+    from(nodeRuntime.file('LICENSE')) {
+        rename { 'node-license.txt' }
+    }
+    into runtimeAssets
+}
+
+android {
+    namespace 'com.dailyreading.app'
+    compileSdk 35
+    ndkVersion '28.0.13004108'
+
+    defaultConfig {
+        applicationId 'com.lihua19527.dailyreading'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+        ndk {
+            abiFilters androidAbi
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DNODE_RUNTIME=${nodeRuntime.asFile.absolutePath}", "-DANDROID_STL=c++_shared"
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets.main.assets.srcDir(runtimeAssets)
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+}
+
+tasks.named('preBuild').configure { dependsOn(packageReader) }
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+}

@@ -527,7 +527,7 @@ function bindArticleEvents(glossaryMap, a) {
   });
 
   $('#btnSpeakAll')?.addEventListener('click', () => speakAll(a));
-  $('#btnStopSpeak')?.addEventListener('click', () => window.speechSynthesis?.cancel());
+  $('#btnStopSpeak')?.addEventListener('click', () => window.DRSpeech?.stop());
   $('#btnRegen')?.addEventListener('click', () => generate());
   $('#btnDelete')?.addEventListener('click', async () => {
     if (!confirm(`确定删除 ${state.date} 的文章？`)) return;
@@ -601,17 +601,16 @@ function speak(text, paraEl) {
 
 function speakAll(a) {
   if (!window.DRSpeech || !window.DRSpeech.available) return toast('当前浏览器不支持朗读', true);
-  const synth = window.speechSynthesis;
-  synth.cancel();
-  synth.resume();
+  window.DRSpeech.stop();
   a.paragraphs.forEach((p, i) => {
     const u = window.DRSpeech.utter(p.en);
+    if (window.DRAndroid) u.onerror = (error) => toast(`朗读失败：${error}`, true);
     u.onstart = () => {
       $$('.para').forEach((e) => e.classList.remove('playing'));
       $(`.para[data-para="${i}"]`)?.classList.add('playing');
     };
     if (i === a.paragraphs.length - 1) u.onend = () => $$('.para').forEach((e) => e.classList.remove('playing'));
-    synth.speak(u);
+    window.DRSpeech.play(u, true);
   });
 }
 
@@ -956,19 +955,27 @@ function closeModal(el) {
 }
 
 // ------------------------------------------------------------------ 截图导入
+let readingImages = 0;
 function addImages(list) {
-  for (const f of list) {
-    if (!f || !/^image\//.test(f.type || '')) continue;
-    if (state.images.length >= 12) {
+  for (const file of list) {
+    if (!file || !/^image\//.test(file.type || '')) continue;
+    if (state.images.length + readingImages >= 12) {
       toast('一次最多 12 张', true);
       break;
     }
+    if (window.DRAndroid && file.size > 12 * 1024 * 1024) {
+      toast('单张图片请控制在 12 MB 以内', true);
+      continue;
+    }
     const reader = new FileReader();
+    readingImages++;
     reader.onload = () => {
-      state.images.push({ name: f.name || 'screenshot', dataUrl: reader.result });
+      state.images.push({ name: file.name || 'screenshot', dataUrl: reader.result });
       renderThumbs();
     };
-    reader.readAsDataURL(f);
+    reader.onerror = () => toast('读取图片失败，请重新选图', true);
+    reader.onloadend = () => readingImages--;
+    reader.readAsDataURL(file);
   }
 }
 
@@ -1040,12 +1047,13 @@ async function runOcr() {
   box.innerHTML = '<p class="tip">正在识别图片……（本地 OCR，不上传）</p>';
   showLoading('正在识别截图……');
   try {
-    const data = await api('/api/ocr', {
+    const android = window.DRAndroid;
+    const input = android
+      ? { results: await android.recognize(state.images.slice()) }
+      : { images: state.images.map((image) => image.dataUrl) };
+    const data = await api(android ? '/api/android/ocr' : '/api/ocr', {
       method: 'POST',
-      body: {
-        images: state.images.map((i) => i.dataUrl),
-        fix: $('#chkOcrFix').checked,
-      },
+      body: { ...input, fix: $('#chkOcrFix').checked },
     });
     const words = data.words || [];
     if (!words.length) {
