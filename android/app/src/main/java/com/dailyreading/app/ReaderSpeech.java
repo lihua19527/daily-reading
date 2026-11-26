@@ -31,10 +31,10 @@ final class ReaderSpeech implements AutoCloseable {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build());
         engine.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-            @Override public void onStart(String id) { notify(id, "start", null, false); }
-            @Override public void onDone(String id) { notify(id, "end", null, true); }
-            @Override public void onError(String id) { notify(id, "error", "系统语音引擎出错", true); }
-            @Override public void onStop(String id, boolean interrupted) { notify(id, "end", null, true); }
+            @Override public void onStart(String id) { dispatch(id, "start", null, false); }
+            @Override public void onDone(String id) { dispatch(id, "end", null, true); }
+            @Override public void onError(String id) { dispatch(id, "error", "系统语音引擎出错", true); }
+            @Override public void onStop(String id, boolean interrupted) { dispatch(id, "end", null, true); }
         });
     }
 
@@ -49,10 +49,10 @@ final class ReaderSpeech implements AutoCloseable {
         listeners.put(id, callback);
         engine.setSpeechRate((float) Math.max(0.5, Math.min(2, rate)));
         int status = engine.speak(text, TextToSpeech.QUEUE_ADD, null, id);
-        if (status != TextToSpeech.SUCCESS) notify(id, "error", "系统语音引擎出错", true);
+        if (status != TextToSpeech.SUCCESS) dispatch(id, "error", "系统语音引擎出错", true);
     }
 
-    private void notify(String id, String event, String error, boolean finished) {
+    private void dispatch(String id, String event, String error, boolean finished) {
         BiConsumer<String, String> callback = finished ? listeners.remove(id) : listeners.get(id);
         if (callback != null) callback.accept(event, error);
     }
@@ -60,7 +60,7 @@ final class ReaderSpeech implements AutoCloseable {
     void stop() {
         engine.stop();
         Map<String, BiConsumer<String, String>> pending = new HashMap<>(listeners);
-        for (String id : pending.keySet()) notify(id, "end", null, true);
+        for (String id : pending.keySet()) dispatch(id, "end", null, true);
     }
 
     @Override public void close() {
